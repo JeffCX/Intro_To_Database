@@ -34,6 +34,42 @@ type NewsAggPage struct {
     Title string
     News string
 }
+//SESSIONS CODE=====================================================================================
+//GLOBAL SESSIONS DEFINE A GLOBAL SESSION MANAGER----------------------
+type Manager struct{
+	cookiename string //private cookie name
+	lock sync.Mutex //protect session
+	provider Provider
+	maxlifetime int64
+}
+
+func NewManager(provideName, cookieName string, maxlifetime int64) (*Manager, error){
+	provider, ok := provides[provideName]
+	    if !ok {
+	        return nil, fmt.Errorf("session: unknown provide %q (forgotten import?)", provideName)
+	    }
+	    return &Manager{provider: provider, cookieName: cookieName, maxlifetime: maxlifetime}, nil
+}
+
+func init() {
+	    globalSessions = NewManager("memory","gosessionid",3600)
+} 
+//CREATE PROVIDER/SESSION TYPES------------------------------------------------
+type Provider interface {
+	    SessionInit(sid string) (Session, error) //implements the initialization of a session, returns new session upon success
+	    SessionRead(sid string) (Session, error) //returns a session represented by the corresponding sid. Creates a new session and returns it if it does not already exist
+	    SessionDestroy(sid string) error //given an sid, deletes the corresponding session
+	    SessionGC(maxLifeTime int64) //deletes expired session variables according to maxlifetime variable
+}
+
+type Session interface {
+	    Set(key, value interface{}) error //set session value
+	    Get(key interface{}) interface{}  //get session value
+	    Delete(key interface{}) error     //delete session value
+	    SessionID() string                //back current sessionID
+}
+//--------------------------------------------------------------------
+//===================================================================================================
 
 
 
@@ -341,6 +377,14 @@ func DefaultRedirect(w http.ResponseWriter, r * http.Request){
 }
 
 func main() {
+	//SESSION VARIABLES AND FUNCTION CALLS======================
+	var globalSessions *session.Manager //global session manager
+	init() //calling function which creates a new manager
+	
+	var provides = make(map[string]Provider)
+	//==========================================================
+	
+		
 	http.HandleFunc("/",DefaultRedirect)
 	http.HandleFunc("/index/", indexHandler)
 	http.HandleFunc("/student/", studentHandler)
