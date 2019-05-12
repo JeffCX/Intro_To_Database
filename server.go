@@ -34,6 +34,84 @@ type NewsAggPage struct {
     Title string
     News string
 }
+//SESSIONS CODE=====================================================================================
+//GLOBAL SESSIONS DEFINE A GLOBAL SESSION MANAGER----------------------
+type Manager struct{
+	cookiename string //private cookie name
+	lock sync.Mutex //protect session
+	provider Provider
+	maxlifetime int64
+}
+
+func NewManager(provideName, cookieName string, maxlifetime int64) (*Manager, error){
+	provider, ok := provides[provideName]
+	    if !ok {
+	        return nil, fmt.Errorf("session: unknown provide %q (forgotten import?)", provideName)
+	    }
+	    return &Manager{provider: provider, cookieName: cookieName, maxlifetime: maxlifetime}, nil
+}
+
+func init() {
+	    globalSessions = NewManager("memory","gosessionid",3600)
+} 
+//CREATE PROVIDER/SESSION TYPES------------------------------------------------
+type Provider interface {
+	    SessionInit(sid string) (Session, error) //implements the initialization of a session, returns new session upon success
+	    SessionRead(sid string) (Session, error) //returns a session represented by the corresponding sid. Creates a new session and returns it if it does not already exist
+	    SessionDestroy(sid string) error //given an sid, deletes the corresponding session
+	    SessionGC(maxLifeTime int64) //deletes expired session variables according to maxlifetime variable
+}
+
+type Session interface {
+	    Set(key, value interface{}) error //set session value
+	    Get(key interface{}) interface{}  //get session value
+	    Delete(key interface{}) error     //delete session value
+	    SessionID() string                //back current sessionID
+}
+//--------------------------------------------------------------------
+
+//CREATE PROVIDER/SESSION FUNCTIONS-----------------------------------
+var provides = make(map[string]Provider)
+// Register makes a session provider available by the provided name.
+// If a Register is called twice with the same name or if the driver is nil,
+// it panics.
+func Register(name string, provider Provider) {
+	    if provider == nil {
+	        panic("session: Register provider is nil")
+	    }
+	    if _, dup := provides[name]; dup {
+	        panic("session: Register called twice for provider " + name)
+	    }
+	    provides[name] = provider
+}
+
+//CREATES A UNIQUE SESSION ID
+func (manager *Manager) sessionId() string {
+	    b := make([]byte, 32)
+	    if _, err := io.ReadFull(rand.Reader, b); err != nil {
+	        return ""
+	    }
+	    return base64.URLEncoding.EncodeToString(b)
+}
+
+//CREATES A SESSION
+func (manager *Manager) SessionStart(w http.ResponseWriter, r *http.Request) (session Session) {
+	    manager.lock.Lock()
+	    defer manager.lock.Unlock()
+	    cookie, err := r.Cookie(manager.cookieName)
+	    if err != nil || cookie.Value == "" {
+	        sid := manager.sessionId()
+	        session, _ = manager.provider.SessionInit(sid)
+	        cookie := http.Cookie{Name: manager.cookieName, Value: url.QueryEscape(sid), Path: "/", HttpOnly: true, MaxAge: int(manager.maxlifetime)}
+	        http.SetCookie(w, &cookie)
+	    } else {
+	        sid, _ := url.QueryUnescape(cookie.Value)
+	        session, _ = manager.provider.SessionRead(sid)
+	    }
+	    return
+}
+//--------------------------------------------------------------------
+//===================================================================================================
 
 
 
@@ -158,6 +236,7 @@ func login(e http.ResponseWriter, r *http.Request){
 	//use js to check the data and make sure it is not empty
     control:=true
 	if r.Method=="POST" {
+		sess := globalSessions.SessionStart(e,r) //SETS UP A GLOBAL SESSION
 		r.ParseForm()
 		db,_:=sql.Open("mysql","root:heizhenzhu@/Course_Evaluation")
 		//db, _:= sql.Open("mysql", "sql9228084:WIKHkznFfd@tcp(sql9.freemysqlhosting.net:3306)/sql9228084")
@@ -463,6 +542,14 @@ func EvaluteHandler(w http.ResponseWriter,r *http.Request) {
 
 
 func main() {
+	//SESSION VARIABLES AND FUNCTION CALLS======================
+	var globalSessions *session.Manager //global session manager
+	init() //calling function which creates a new manager
+	
+	//var provides = make(map[string]Provider) //DON'T KNOW IF THIS VARIABLE GOES HERE
+	//==========================================================
+	
+		
 	http.HandleFunc("/",DefaultRedirect)
 	http.HandleFunc("/index/", indexHandler)
 	http.HandleFunc("/student/", studentHandler)
